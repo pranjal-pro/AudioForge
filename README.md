@@ -18,6 +18,14 @@ npm run build
 npm start       # serves the app and the API on http://localhost:4000 (override with PORT=...)
 ```
 
+### Deploying (e.g. Render)
+
+- Build: `npm install && npm run build` · Start: `node server/index.mjs`
+- The yt-dlp binary needs `python3` on the host. It is passed the running Node as its JS runtime, which YouTube extraction needs.
+- Check `GET /api/health` after deploy: it reports the yt-dlp version and JS runtime. On failure, the full yt-dlp output is in the server logs. Set `YTDLP_DEBUG=1` for verbose output.
+- If logs show YouTube's "Sign in to confirm you're not a bot" (common on cloud IPs), export YouTube cookies to a file and set `YTDLP_COOKIES=/path/to/cookies.txt`.
+- yt-dlp is downloaded at `npm install`. If a cached build keeps an old version, add `npm rebuild youtube-dl-exec` to the build command.
+
 ## How it works
 
 - **Audio editing** happens entirely in the browser: files are decoded with the Web Audio API, trimmed and faded, merged into one buffer, and encoded to a 128 kbps MP3 with lamejs.
