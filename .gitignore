@@ -21,3 +21,6 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# YouTube cookies for yt-dlp (secret: upload to the host, never commit)
+*cookies*.txt

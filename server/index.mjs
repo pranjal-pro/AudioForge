@@ -1,5 +1,6 @@
 import express from 'express';
 import youtubedl from 'youtube-dl-exec';
+import { timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -31,13 +32,41 @@ const YTDLP_FLAGS = {
   ...(process.env.YTDLP_DEBUG && { verbose: true }),
 };
 
+// HTTP Basic Auth: set AUTH_USER and AUTH_PASS to lock the whole app (pages and
+// every /api route) behind a browser login prompt, e.g. on a public deploy that
+// uses your YouTube cookies. Leave them unset to disable auth (local dev).
+const AUTH_USER = process.env.AUTH_USER || '';
+const AUTH_PASS = process.env.AUTH_PASS || '';
+const AUTH_ON = !!(AUTH_USER && AUTH_PASS);
+
+const safeEqual = (a, b) => {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+};
+
 const app = express();
+
+if (AUTH_ON) {
+  app.use((req, res, next) => {
+    const [scheme, encoded] = (req.headers.authorization || '').split(' ');
+    if (scheme === 'Basic' && encoded) {
+      const decoded = Buffer.from(encoded, 'base64').toString();
+      const sep = decoded.indexOf(':');
+      const userOk = sep >= 0 && safeEqual(decoded.slice(0, sep), AUTH_USER);
+      const passOk = sep >= 0 && safeEqual(decoded.slice(sep + 1), AUTH_PASS);
+      if (userOk && passOk) return next();
+    }
+    res.set('WWW-Authenticate', 'Basic realm="AudioForge", charset="UTF-8"');
+    res.status(401).send('Authentication required');
+  });
+}
 
 // Quick deploy check: is yt-dlp runnable, which version, which JS runtime?
 app.get('/api/health', async (_req, res) => {
   try {
     const version = String(await youtubedl('', { version: true })).trim();
-    res.json({ ok: true, ytDlp: version, node: process.version, jsRuntime: YTDLP_FLAGS.jsRuntimes, cookies: !!YTDLP_FLAGS.cookies, proxy: !!YTDLP_FLAGS.proxy });
+    res.json({ ok: true, ytDlp: version, node: process.version, jsRuntime: YTDLP_FLAGS.jsRuntimes, cookies: !!YTDLP_FLAGS.cookies, proxy: !!YTDLP_FLAGS.proxy, auth: AUTH_ON });
   } catch (err) {
     res.status(500).json({ ok: false, error: String(err.stderr || err.message).slice(0, 500) });
   }
@@ -86,7 +115,7 @@ app.listen(PORT, (err) => {
     console.error(`Port ${PORT} is busy (is another server running?). Set PORT=... to use a different one.`);
     process.exit(1);
   }
-  console.log(`AudioForge server on http://localhost:${PORT}`);
+  console.log(`AudioForge server on http://localhost:${PORT}${AUTH_ON ? ' (basic auth on)' : ''}`);
   youtubedl('', { version: true })
     .then((v) => console.log(`yt-dlp ${String(v).trim()} · JS runtime ${YTDLP_FLAGS.jsRuntimes}`))
     .catch((e) => console.error('yt-dlp is not runnable:', String(e.stderr || e.message).trim()));
