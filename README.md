@@ -31,7 +31,7 @@ npm start       # serves the app and the API on http://localhost:4000 (override 
 ## How it works
 
 - **Audio editing** happens entirely in the browser: files are decoded with the Web Audio API, trimmed and faded, merged into one buffer, and encoded to a 128 kbps MP3 with lamejs.
-- **YouTube import**: `server/index.mjs` is a small Express server with one endpoint, `GET /api/youtube?url=...`. It runs `yt-dlp` (via `youtube-dl-exec`) and streams the best m4a audio track back. ffmpeg isn't needed. In dev, Vite proxies `/api` to this server.
+- **YouTube import**: `server/index.mjs` is a small Express server with one endpoint, `GET /api/youtube?url=...`. It runs `yt-dlp` (via `youtube-dl-exec`), extracts the audio to m4a (AAC) with a bundled ffmpeg (`ffmpeg-static`), and sends it back. Any stream with audio works, which matters on cloud hosts where YouTube may only offer combined or HLS streams. In dev, Vite proxies `/api` to this server.
 
 ## Features
 

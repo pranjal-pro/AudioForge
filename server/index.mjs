@@ -1,7 +1,8 @@
 import express from 'express';
 import youtubedl from 'youtube-dl-exec';
+import ffmpegPath from 'ffmpeg-static';
 import { timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,36 +73,62 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
-// Stream YouTube audio straight from yt-dlp. m4a (AAC) needs no ffmpeg and
-// decodes in every browser.
+// Fetch YouTube audio as m4a. Which formats YouTube offers depends on the client
+// and IP (cloud hosts with cookies may get only combined/HLS streams), so take any
+// stream with audio and let the bundled ffmpeg extract it to m4a (AAC), which
+// every browser can decode. Audio-only m4a is preferred and is only remuxed.
+const AUDIO_FORMAT = 'bestaudio[ext=m4a]/bestaudio/best[acodec!=none][height<=480]/best[acodec!=none]';
+
 app.get('/api/youtube', (req, res) => {
   const url = String(req.query.url || '').trim();
   if (!/^https?:\/\/(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\//.test(url)) {
     return res.status(400).json({ error: 'That does not look like a YouTube link.' });
   }
 
+  const workDir = mkdtempSync(path.join(tmpdir(), 'audioforge-'));
+  const cleanup = () => rmSync(workDir, { recursive: true, force: true });
+
   const subprocess = youtubedl.exec(
     url,
-    { ...YTDLP_FLAGS, format: 'bestaudio[ext=m4a]/bestaudio', output: '-', noPlaylist: true, quiet: !YTDLP_FLAGS.verbose },
-    { stdio: ['ignore', 'pipe', 'pipe'] }
+    {
+      ...YTDLP_FLAGS,
+      format: AUDIO_FORMAT,
+      extractAudio: true,
+      audioFormat: 'm4a',
+      ffmpegLocation: ffmpegPath,
+      output: path.join(workDir, 'audio.%(ext)s'),
+      noPlaylist: true,
+      quiet: !YTDLP_FLAGS.verbose,
+    },
+    { stdio: ['ignore', 'ignore', 'pipe'] }
   );
 
   let stderr = '';
   subprocess.stderr.on('data', (chunk) => (stderr += chunk));
-  subprocess.stdout.once('data', () => res.type('audio/mp4'));
-  // Don't let pipe end the response: on failure we still need to send the error.
-  subprocess.stdout.pipe(res, { end: false });
 
   // Stop yt-dlp if the browser cancels the import.
-  res.on('close', () => subprocess.kill());
-
-  subprocess.then(() => res.end()).catch(() => {
-    // Full yt-dlp output goes to the server log (Render → Logs) for diagnosis.
-    if (!res.destroyed) console.error(`[youtube] yt-dlp failed for ${url}:\n${stderr.trim()}`);
-    if (res.headersSent) return res.destroy();
-    const message = stderr.split('\n').find((l) => l.startsWith('ERROR:')) || 'Could not fetch audio from YouTube.';
-    res.status(502).json({ error: message.replace(/^ERROR:\s*(\[\w+\]\s*[\w-]+:\s*)?/, '') });
+  res.on('close', () => {
+    subprocess.kill();
+    cleanup();
   });
+
+  subprocess
+    .then(() => {
+      const file = readdirSync(workDir).find((f) => f.endsWith('.m4a'));
+      if (!file) throw new Error('yt-dlp finished but produced no m4a file');
+      res.type('audio/mp4').sendFile(path.join(workDir, file), (err) => {
+        if (err && !res.headersSent) res.status(500).json({ error: 'Could not send the audio file.' });
+        cleanup();
+      });
+    })
+    .catch((err) => {
+      if (res.destroyed) return; // cancelled by the browser
+      // Full yt-dlp output goes to the server log (Render → Logs) for diagnosis.
+      console.error(`[youtube] yt-dlp failed for ${url}:\n${stderr.trim() || err.message}`);
+      const message = stderr.split('\n').find((l) => l.startsWith('ERROR:')) || 'Could not fetch audio from YouTube.';
+      res.status(502).json({ error: message.replace(/^ERROR:\s*(\[\w+\]\s*[\w-]+:\s*)?/, '') });
+      cleanup();
+    });
 });
 
 // In production, serve the built front end from the same server.
