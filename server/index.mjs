@@ -1,6 +1,7 @@
 import express from 'express';
 import youtubedl from 'youtube-dl-exec';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,10 +11,23 @@ const DIST_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 // yt-dlp needs a JS runtime to solve YouTube's player challenges. Without one it
 // falls back to a single client, which datacenter IPs (e.g. Render) get blocked on
 // ("Failed to extract any player response"). Reuse the Node running this server.
-// Optional: YTDLP_COOKIES=/path/to/cookies.txt for IPs that hit YouTube's bot check.
+// Optional: YTDLP_COOKIES=/path/to/cookies.txt for IPs that hit YouTube's bot check,
+// and YTDLP_PROXY=http://user:pass@host:port when the host's IP is blocked outright.
+// yt-dlp writes the cookie jar back on exit, and secret files (e.g. Render's
+// /etc/secrets) are read-only, so work from a writable copy.
+function writableCookies(file) {
+  if (!file) return undefined;
+  const copy = path.join(tmpdir(), 'yt-cookies.txt');
+  rmSync(copy, { force: true });
+  writeFileSync(copy, readFileSync(file), { mode: 0o600 });
+  return copy;
+}
+const cookiesFile = writableCookies(process.env.YTDLP_COOKIES);
+
 const YTDLP_FLAGS = {
   jsRuntimes: `node:${process.execPath}`,
-  ...(process.env.YTDLP_COOKIES && { cookies: process.env.YTDLP_COOKIES }),
+  ...(cookiesFile && { cookies: cookiesFile }),
+  ...(process.env.YTDLP_PROXY && { proxy: process.env.YTDLP_PROXY }),
   ...(process.env.YTDLP_DEBUG && { verbose: true }),
 };
 
@@ -23,7 +37,7 @@ const app = express();
 app.get('/api/health', async (_req, res) => {
   try {
     const version = String(await youtubedl('', { version: true })).trim();
-    res.json({ ok: true, ytDlp: version, node: process.version, jsRuntime: YTDLP_FLAGS.jsRuntimes, cookies: !!YTDLP_FLAGS.cookies });
+    res.json({ ok: true, ytDlp: version, node: process.version, jsRuntime: YTDLP_FLAGS.jsRuntimes, cookies: !!YTDLP_FLAGS.cookies, proxy: !!YTDLP_FLAGS.proxy });
   } catch (err) {
     res.status(500).json({ ok: false, error: String(err.stderr || err.message).slice(0, 500) });
   }

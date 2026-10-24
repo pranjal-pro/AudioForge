@@ -23,7 +23,8 @@ npm start       # serves the app and the API on http://localhost:4000 (override 
 - Build: `npm install && npm run build` · Start: `node server/index.mjs`
 - The yt-dlp binary needs `python3` on the host. It is passed the running Node as its JS runtime, which YouTube extraction needs.
 - Check `GET /api/health` after deploy: it reports the yt-dlp version and JS runtime. On failure, the full yt-dlp output is in the server logs. Set `YTDLP_DEBUG=1` for verbose output.
-- If logs show YouTube's "Sign in to confirm you're not a bot" (common on cloud IPs), export YouTube cookies to a file and set `YTDLP_COOKIES=/path/to/cookies.txt`.
+- If logs show YouTube's "Sign in to confirm you're not a bot" (common on cloud IPs), export YouTube cookies to a file and set `YTDLP_COOKIES=/path/to/cookies.txt`. On Render, add it as a Secret File `cookies.txt` and set `YTDLP_COOKIES=/etc/secrets/cookies.txt` (read-only is fine; the server works from a copy).
+- YouTube often blocks cloud/datacenter IPs outright ("Failed to extract any player response" on the server, while it works locally). Route yt-dlp through a residential proxy with `YTDLP_PROXY=http://user:pass@host:port`.
 - yt-dlp is downloaded at `npm install`. If a cached build keeps an old version, add `npm rebuild youtube-dl-exec` to the build command.
 
 ## How it works
